@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 2,
+  "id": "vibe",
+  "displayName": "Mistral Vibe",
+  "kind": "cli",
+  "binary": {
+    "windows": ["vibe", "vibe.cmd"],
+    "macos": ["/usr/local/bin/vibe", "$HOME/.local/bin/vibe", "vibe"],
+    "linux": ["$HOME/.local/bin/vibe", "/usr/local/bin/vibe", "vibe"]
+  },
+  "isolation": {
+    "strategy": "accountOverlay",
+    "mode": "foreground",
+    "env": { "VIBE_HOME": "{runtimeRoot}" },
+    "clearEnv": []
+  },
+  "account": {
+    "mechanism": "fileOverlay",
+    "credentialFiles": [".env"],
+    "credentialPrecedence": [".env"],
+    "logoutScope": "profile"
+  },
+  "normalState": {
+    "root": {
+      "windows": "%USERPROFILE%\\.vibe",
+      "macos": "$HOME/.vibe",
+      "linux": "$HOME/.vibe"
+    },
+    "sharedPaths": [
+      "config.toml", "agents", "prompts", "skills", "tools"
+    ],
+    "sessionPaths": ["logs", "sessions"],
+    "filePaths": [".env", "config.toml"],
+    "unsafePaths": []
+  },
+  "concurrency": { "level": "multiWriter", "singletonScope": "none" },
+  "support": {
+    "windows": { "level": "supported", "reason": "file overlay" },
+    "macos": { "level": "supported", "reason": "file overlay" },
+    "linux": { "level": "supported", "reason": "file overlay" }
+  },
+  "install": "curl -LsSf https://raw.githubusercontent.com/mistralai/mistral-vibe/main/install.sh | bash",
+  "versionCommand": ["--version"]
+}

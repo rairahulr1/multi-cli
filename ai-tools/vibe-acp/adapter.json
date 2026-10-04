@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 2,
+  "id": "vibe-acp",
+  "displayName": "Vibe ACP",
+  "kind": "cli",
+  "binary": {
+    "windows": ["vibe-acp.cmd", "vibe-acp"],
+    "macos": ["vibe-acp"],
+    "linux": ["vibe-acp"]
+  },
+  "protocol": {
+    "type": "acp",
+    "acp": {
+      "command": ["{binary}", "--acp"],
+      "transport": "stdio",
+      "env": {
+        "VIBE_HOME": "{runtimeRoot}",
+        "MULTICLI_PROFILE_ID": "{profileId}"
+      },
+      "handshake": {
+        "type": "initialize",
+        "timeoutMs": 10000
+      },
+      "clientEnv": {
+        "ACP_SERVER_PID": "{serverPid}"
+      },
+      "clientCommand": ["vibe"]
+    }
+  },
+  "isolation": {
+    "strategy": "accountOverlay",
+    "mode": "detached",
+    "env": { "VIBE_HOME": "{runtimeRoot}" },
+    "clearEnv": []
+  },
+  "account": {
+    "mechanism": "fileOverlay",
+    "credentialFiles": [".env"],
+    "credentialPrecedence": [".env"],
+    "logoutScope": "profile"
+  },
+  "normalState": {
+    "root": {
+      "windows": "%USERPROFILE%\\.vibe",
+      "macos": "$HOME/.vibe",
+      "linux": "$HOME/.vibe"
+    },
+    "sharedPaths": ["config.toml", "agents", "prompts", "skills", "tools"],
+    "sessionPaths": ["logs", "sessions"],
+    "filePaths": [".env", "config.toml"],
+    "unsafePaths": []
+  },
+  "concurrency": { "level": "multiWriter", "singletonScope": "none" },
+  "support": {
+    "windows": { "level": "supported", "reason": "file overlay" },
+    "macos": { "level": "supported", "reason": "file overlay" },
+    "linux": { "level": "supported", "reason": "file overlay" }
+  },
+  "install": "curl -LsSf https://raw.githubusercontent.com/mistralai/mistral-vibe/main/install.sh | bash",
+  "versionCommand": ["--version"]
+}

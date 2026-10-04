@@ -52,6 +52,36 @@
         }
       }
     },
+    "protocol": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "exec",
+            "stdio",
+            "http",
+            "acp",
+            "websocket"
+          ]
+        },
+        "stdio": {
+          "$ref": "#/$defs/protocolStdio"
+        },
+        "http": {
+          "$ref": "#/$defs/protocolHttp"
+        },
+        "acp": {
+          "$ref": "#/$defs/protocolAcp"
+        },
+        "websocket": {
+          "$ref": "#/$defs/protocolWebSocket"
+        }
+      },
+      "additionalProperties": false
+    },
     "isolation": {
       "type": "object",
       "required": [
@@ -361,6 +391,283 @@
         "reason": {
           "type": "string",
           "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "protocolStdio": {
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "messageFormat": {
+          "enum": ["jsonrpc", "newline-delimited-json", "raw"]
+        },
+        "newlineDelimited": {
+          "type": "boolean"
+        },
+        "healthCheck": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "enum": ["initialize", "ready", "none"]
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "clientEnv": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "clientCommand": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "protocolHttp": {
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "port": {
+          "type": "object",
+          "properties": {
+            "strategy": {
+              "enum": ["dynamic", "fixed", "range"]
+            },
+            "preferred": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "range": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "additionalProperties": false
+        },
+        "bindAddress": {
+          "type": "string",
+          "minLength": 1
+        },
+        "healthCheck": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "method": {
+              "enum": ["GET", "POST"]
+            },
+            "expectedStatus": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 599
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "intervalMs": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "clientEnv": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "clientCommand": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "shutdown": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "enum": ["sigterm", "sigkill", "http"]
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "protocolAcp": {
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "transport": {
+          "enum": ["stdio", "unix-socket", "tcp"]
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "handshake": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "enum": ["initialize", "ready", "none"]
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "clientEnv": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "clientCommand": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "socket": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "enum": ["unix", "tcp"]
+            },
+            "path": { "type": "string", "minLength": 1 },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "protocolWebSocket": {
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "port": {
+          "type": "object",
+          "properties": {
+            "strategy": {
+              "enum": ["dynamic", "fixed", "range"]
+            },
+            "preferred": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "range": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "additionalProperties": false
+        },
+        "bindAddress": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "healthCheck": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "enum": ["http", "connect", "none"]
+            },
+            "path": { "type": "string", "minLength": 1 },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "intervalMs": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "clientEnv": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "clientCommand": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "shutdown": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "enum": ["sigterm", "sigkill", "close"]
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

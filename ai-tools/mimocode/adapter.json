@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 2,
+  "id": "mimocode",
+  "displayName": "MiMo Code",
+  "kind": "cli",
+  "binary": {
+    "windows": ["%APPDATA%\\npm\\mimo.cmd", "%APPDATA%\\npm\\mimo", "mimo"],
+    "macos": ["/usr/local/bin/mimo", "$HOME/.npm-global/bin/mimo", "mimo"],
+    "linux": ["$HOME/.npm-global/bin/mimo", "/usr/local/bin/mimo", "mimo"]
+  },
+  "isolation": {
+    "strategy": "accountOverlay",
+    "mode": "foreground",
+    "env": { "MIMOCODE_HOME": "{runtimeRoot}" },
+    "clearEnv": []
+  },
+  "account": {
+    "mechanism": "fileOverlay",
+    "credentialFiles": ["auth.json"],
+    "credentialPrecedence": ["auth.json"],
+    "logoutScope": "profile"
+  },
+  "normalState": {
+    "root": {
+      "windows": "%LOCALAPPDATA%\\mimocode",
+      "macos": "$HOME/.local/share/mimocode",
+      "linux": "$HOME/.local/share/mimocode"
+    },
+    "sharedPaths": [
+      "config.toml", "mcp-auth.json", "skills", "agents", "prompts", "mcp"
+    ],
+    "sessionPaths": ["sessions", "history.jsonl", "memory", "logs"],
+    "filePaths": [
+      "auth.json", "config.toml", "mcp-auth.json"
+    ],
+    "unsafePaths": []
+  },
+  "concurrency": { "level": "multiWriter", "singletonScope": "none" },
+  "support": {
+    "windows": { "level": "supported", "reason": "file overlay" },
+    "macos": { "level": "supported", "reason": "file overlay" },
+    "linux": { "level": "supported", "reason": "file overlay" }
+  },
+  "install": "npm i -g @mimo-ai/cli",
+  "versionCommand": ["--version"]
+}

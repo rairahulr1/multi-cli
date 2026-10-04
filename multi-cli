@@ -27,6 +27,8 @@ source "$SCRIPT_DIR/lib/transfer.sh"
 source "$SCRIPT_DIR/lib/migration.sh"
 # shellcheck source=lib/multicli-osuser.sh
 source "$SCRIPT_DIR/lib/multicli-osuser.sh"
+# shellcheck source=lib/protocol-runtime.sh
+source "$SCRIPT_DIR/lib/protocol-runtime.sh"
 
 # Skip automatic session seeding when the base state exceeds this size.
 SEED_MAX_BYTES=$((500 * 1024 * 1024))
@@ -1155,9 +1157,17 @@ cmd_launch() {
     abort "$(json_str '.displayName' "$apath") binary not found.$hint"
   }
 
-  local strategy display
+  local strategy display protocol_type
   strategy="$(json_str '.isolation.strategy' "$apath")"
   display="$(json_str '.displayName' "$apath")"
+  protocol_type="$(json_str '.protocol.type' "$apath" 2>/dev/null)"
+
+  # Protocol-based tools (stdio, http, acp, websocket) use the protocol launcher
+  if [ -n "$protocol_type" ] && [ "$protocol_type" != "exec" ]; then
+    echo "Launching $display profile '$spec' [protocol: $protocol_type]"
+    launch_protocol "$TOOL" "$NAME" "$binary" "${binary_args[@]+"${binary_args[@]}"}"
+    return
+  fi
 
   # Isolated profiles share nothing: the profile dir is the tool's whole root,
   # so the account-overlay runtime (shared links, overlay) is bypassed.
@@ -1490,6 +1500,394 @@ folder_size() {
     bytes="$(du -sb "$p" 2>/dev/null | awk '{print $1}')" || bytes=0
   fi
   format_bytes "$bytes"
+}
+
+# ── Protocol launchers (stdio, http, acp, websocket) ─────────────────────────
+
+launch_protocol() {
+  local tool="$1" name="$2" binary="$3"; shift 3
+  local apath pdir protocol_type
+  apath="$(adapter_path "$tool")"
+  pdir="$(profile_dir "$tool" "$name")"
+
+  protocol_type="$(protocol_json_field "$apath" "protocol.type" 2>/dev/null)"
+  [ -z "$protocol_type" ] && protocol_type="exec"
+
+  case "$protocol_type" in
+    exec)     launch_isolated "$tool" "$pdir" "$binary" "$@" ;;
+    stdio)    launch_stdio    "$tool" "$name" "$binary" "$@" ;;
+    http)     launch_http     "$tool" "$name" "$binary" "$@" ;;
+    acp)      launch_acp      "$tool" "$name" "$binary" "$@" ;;
+    websocket) launch_websocket "$tool" "$name" "$binary" "$@" ;;
+    *)        abort "Unknown protocol type '$protocol_type' for tool '$tool'" ;;
+  esac
+}
+
+launch_stdio() {
+  local tool="$1" name="$2" binary="$3"; shift 3
+  local apath pdir
+  apath="$(adapter_path "$tool")"
+  pdir="$(profile_dir "$tool" "$name")"
+
+  # Build server command
+  local server_cmd=()
+  protocol_json_array server_cmd "$apath" "protocol.stdio.command"
+
+  # Expand {binary} placeholder
+  local i
+  for i in "${!server_cmd[@]}"; do
+    server_cmd[$i]="${server_cmd[$i]//\{binary\}/$binary}"
+  done
+
+  # Server env
+  local server_env
+  server_env="$(protocol_json_env "$apath" "protocol.stdio.env" 2>/dev/null)"
+
+  # Client env
+  local client_env
+  client_env="$(protocol_json_env "$apath" "protocol.stdio.clientEnv" 2>/dev/null)"
+
+  # Client command (if specified)
+  local client_cmd=()
+  protocol_json_array client_cmd "$apath" "protocol.stdio.clientCommand"
+
+  # Health check
+  local hc_type
+  hc_type="$(protocol_json_field "$apath" "protocol.stdio.healthCheck.type" 2>/dev/null)"
+  [ -z "$hc_type" ] && hc_type="none"
+
+  local log_file="$pdir/server.log"
+
+  # Spawn server
+  echo "Starting $tool server (stdio)..."
+  eval "$server_env"
+  protocol_spawn_server "$log_file" "${server_cmd[@]}"
+
+  # Health check
+  if [ "$hc_type" != "none" ]; then
+    local hc_timeout
+    hc_timeout="$(protocol_json_field "$apath" "protocol.stdio.healthCheck.timeoutMs" 2>/dev/null)"
+    [ -z "$hc_timeout" ] && hc_timeout=5000
+    sleep "$(awk "BEGIN {print $hc_timeout / 1000}")"
+  fi
+
+  # Export client env
+  eval "$client_env"
+
+  # Spawn client or exec remaining args
+  if [ ${#client_cmd[@]} -gt 0 ]; then
+    echo "Starting $tool client..."
+    "${client_cmd[@]}" "$@"
+    local client_rc=$?
+  else
+    "$@"
+    local client_rc=$?
+  fi
+
+  # Shutdown server
+  protocol_shutdown_server "$SERVER_PID" sigterm 5000
+  return $client_rc
+}
+
+launch_http() {
+  local tool="$1" name="$2" binary="$3"; shift 3
+  local apath pdir
+  apath="$(adapter_path "$tool")"
+  pdir="$(profile_dir "$tool" "$name")"
+
+  # Build server command
+  local server_cmd=()
+  protocol_json_array server_cmd "$apath" "protocol.http.command"
+
+  local i
+  for i in "${!server_cmd[@]}"; do
+    server_cmd[$i]="${server_cmd[$i]//\{binary\}/$binary}"
+  done
+
+  # Port selection
+  local port_strategy
+  port_strategy="$(protocol_json_field "$apath" "protocol.http.port.strategy" 2>/dev/null)"
+  [ -z "$port_strategy" ] && port_strategy="dynamic"
+
+  local port=""
+  case "$port_strategy" in
+    fixed)
+      port="$(protocol_json_field "$apath" "protocol.http.port.preferred" 2>/dev/null)"
+      ;;
+    range)
+      local range_start range_end
+      range_start="$(protocol_json_field "$apath" "protocol.http.port.range.0" 2>/dev/null)"
+      range_end="$(protocol_json_field "$apath" "protocol.http.port.range.1" 2>/dev/null)"
+      port="$(protocol_find_free_port "" "$range_start" "$range_end")"
+      ;;
+    *)
+      port="$(protocol_find_free_port)"
+      ;;
+  esac
+
+  local bind
+  bind="$(protocol_json_field "$apath" "protocol.http.bindAddress" 2>/dev/null)"
+  [ -z "$bind" ] && bind="127.0.0.1"
+
+  # Server env
+  local server_env
+  server_env="$(protocol_json_env "$apath" "protocol.http.env" 2>/dev/null)"
+
+  # Client env
+  local client_env
+  client_env="$(protocol_json_env "$apath" "protocol.http.clientEnv" 2>/dev/null)"
+
+  # Client command
+  local client_cmd=()
+  protocol_json_array client_cmd "$apath" "protocol.http.clientCommand"
+
+  # Health check
+  local hc_path hc_method hc_status hc_timeout hc_interval
+  hc_path="$(protocol_json_field "$apath" "protocol.http.healthCheck.path" 2>/dev/null)"
+  hc_method="$(protocol_json_field "$apath" "protocol.http.healthCheck.method" 2>/dev/null)"
+  hc_status="$(protocol_json_field "$apath" "protocol.http.healthCheck.expectedStatus" 2>/dev/null)"
+  hc_timeout="$(protocol_json_field "$apath" "protocol.http.healthCheck.timeoutMs" 2>/dev/null)"
+  hc_interval="$(protocol_json_field "$apath" "protocol.http.healthCheck.intervalMs" 2>/dev/null)"
+  [ -z "$hc_method" ] && hc_method="GET"
+  [ -z "$hc_status" ] && hc_status=200
+  [ -z "$hc_timeout" ] && hc_timeout=10000
+  [ -z "$hc_interval" ] && hc_interval=200
+
+  local log_file="$pdir/server.log"
+
+  # Spawn server
+  echo "Starting $tool server (http) on $bind:$port..."
+  eval "$server_env"
+  protocol_spawn_server "$log_file" "${server_cmd[@]}"
+
+  # Health check
+  if [ -n "$hc_path" ]; then
+    local url="http://${bind}:${port}${hc_path}"
+    echo "Waiting for $url..."
+    if ! protocol_wait_for_http "$url" "$hc_status" "$hc_timeout" "$hc_interval"; then
+      echo "Server failed to become healthy. Check $log_file" >&2
+      protocol_shutdown_server "$SERVER_PID" sigkill
+      return 1
+    fi
+  fi
+
+  # Export client env
+  eval "$client_env"
+
+  # Spawn client or exec remaining args
+  if [ ${#client_cmd[@]} -gt 0 ]; then
+    echo "Starting $tool client..."
+    "${client_cmd[@]}" "$@"
+    local client_rc=$?
+  else
+    "$@"
+    local client_rc=$?
+  fi
+
+  # Shutdown server
+  local shutdown_method
+  shutdown_method="$(protocol_json_field "$apath" "protocol.http.shutdown.method" 2>/dev/null)"
+  [ -z "$shutdown_method" ] && shutdown_method="sigterm"
+  protocol_shutdown_server "$SERVER_PID" "$shutdown_method" 5000
+  return $client_rc
+}
+
+launch_acp() {
+  local tool="$1" name="$2" binary="$3"; shift 3
+  local apath pdir
+  apath="$(adapter_path "$tool")"
+  pdir="$(profile_dir "$tool" "$name")"
+
+  # Build server command
+  local server_cmd=()
+  protocol_json_array server_cmd "$apath" "protocol.acp.command"
+
+  local i
+  for i in "${!server_cmd[@]}"; do
+    server_cmd[$i]="${server_cmd[$i]//\{binary\}/$binary}"
+  done
+
+  # Transport
+  local transport
+  transport="$(protocol_json_field "$apath" "protocol.acp.transport" 2>/dev/null)"
+  [ -z "$transport" ] && transport="stdio"
+
+  # Socket path
+  local socket_path=""
+  if [ "$transport" = "unix-socket" ]; then
+    socket_path="$pdir/acp.sock"
+  fi
+
+  # Server env
+  local server_env
+  server_env="$(protocol_json_env "$apath" "protocol.acp.env" 2>/dev/null)"
+
+  # Client env
+  local client_env
+  client_env="$(protocol_json_env "$apath" "protocol.acp.clientEnv" 2>/dev/null)"
+
+  # Client command
+  local client_cmd=()
+  protocol_json_array client_cmd "$apath" "protocol.acp.clientCommand"
+
+  # Handshake
+  local hs_type hs_timeout
+  hs_type="$(protocol_json_field "$apath" "protocol.acp.handshake.type" 2>/dev/null)"
+  hs_timeout="$(protocol_json_field "$apath" "protocol.acp.handshake.timeoutMs" 2>/dev/null)"
+  [ -z "$hs_type" ] && hs_type="none"
+  [ -z "$hs_timeout" ] && hs_timeout=10000
+
+  local log_file="$pdir/server.log"
+
+  # Spawn server
+  echo "Starting $tool server (acp/$transport)..."
+  eval "$server_env"
+  protocol_spawn_server "$log_file" "${server_cmd[@]}"
+
+  # Wait for socket if unix-socket transport
+  if [ "$transport" = "unix-socket" ] && [ -n "$socket_path" ]; then
+    echo "Waiting for socket $socket_path..."
+    if ! protocol_wait_for_socket "$socket_path" "$hs_timeout" 200; then
+      echo "Server socket failed to appear. Check $log_file" >&2
+      protocol_shutdown_server "$SERVER_PID" sigkill
+      return 1
+    fi
+  fi
+
+  # Export client env
+  eval "$client_env"
+
+  # Spawn client or exec remaining args
+  if [ ${#client_cmd[@]} -gt 0 ]; then
+    echo "Starting $tool client..."
+    "${client_cmd[@]}" "$@"
+    local client_rc=$?
+  else
+    "$@"
+    local client_rc=$?
+  fi
+
+  # Shutdown server
+  protocol_shutdown_server "$SERVER_PID" sigterm 5000
+
+  # Cleanup socket
+  [ -n "$socket_path" ] && rm -f "$socket_path"
+
+  return $client_rc
+}
+
+launch_websocket() {
+  local tool="$1" name="$2" binary="$3"; shift 3
+  local apath pdir
+  apath="$(adapter_path "$tool")"
+  pdir="$(profile_dir "$tool" "$name")"
+
+  # Build server command
+  local server_cmd=()
+  protocol_json_array server_cmd "$apath" "protocol.websocket.command"
+
+  local i
+  for i in "${!server_cmd[@]}"; do
+    server_cmd[$i]="${server_cmd[$i]//\{binary\}/$binary}"
+  done
+
+  # Port selection
+  local port_strategy
+  port_strategy="$(protocol_json_field "$apath" "protocol.websocket.port.strategy" 2>/dev/null)"
+  [ -z "$port_strategy" ] && port_strategy="dynamic"
+
+  local port=""
+  case "$port_strategy" in
+    fixed)
+      port="$(protocol_json_field "$apath" "protocol.websocket.port.preferred" 2>/dev/null)"
+      ;;
+    range)
+      local range_start range_end
+      range_start="$(protocol_json_field "$apath" "protocol.websocket.port.range.0" 2>/dev/null)"
+      range_end="$(protocol_json_field "$apath" "protocol.websocket.port.range.1" 2>/dev/null)"
+      port="$(protocol_find_free_port "" "$range_start" "$range_end")"
+      ;;
+    *)
+      port="$(protocol_find_free_port)"
+      ;;
+  esac
+
+  local bind
+  bind="$(protocol_json_field "$apath" "protocol.websocket.bindAddress" 2>/dev/null)"
+  [ -z "$bind" ] && bind="127.0.0.1"
+
+  local ws_path
+  ws_path="$(protocol_json_field "$apath" "protocol.websocket.path" 2>/dev/null)"
+  [ -z "$ws_path" ] && ws_path="/ws"
+
+  # Server env
+  local server_env
+  server_env="$(protocol_json_env "$apath" "protocol.websocket.env" 2>/dev/null)"
+
+  # Client env
+  local client_env
+  client_env="$(protocol_json_env "$apath" "protocol.websocket.clientEnv" 2>/dev/null)"
+
+  # Client command
+  local client_cmd=()
+  protocol_json_array client_cmd "$apath" "protocol.websocket.clientCommand"
+
+  # Health check
+  local hc_type hc_timeout hc_interval
+  hc_type="$(protocol_json_field "$apath" "protocol.websocket.healthCheck.type" 2>/dev/null)"
+  hc_timeout="$(protocol_json_field "$apath" "protocol.websocket.healthCheck.timeoutMs" 2>/dev/null)"
+  hc_interval="$(protocol_json_field "$apath" "protocol.websocket.healthCheck.intervalMs" 2>/dev/null)"
+  [ -z "$hc_type" ] && hc_type="connect"
+  [ -z "$hc_timeout" ] && hc_timeout=10000
+  [ -z "$hc_interval" ] && hc_interval=200
+
+  local log_file="$pdir/server.log"
+
+  # Spawn server
+  echo "Starting $tool server (websocket) on $bind:$port..."
+  eval "$server_env"
+  protocol_spawn_server "$log_file" "${server_cmd[@]}"
+
+  # Health check
+  if [ "$hc_type" = "http" ]; then
+    local hc_path
+    hc_path="$(protocol_json_field "$apath" "protocol.websocket.healthCheck.path" 2>/dev/null)"
+    [ -z "$hc_path" ] && hc_path="/health"
+    local url="http://${bind}:${port}${hc_path}"
+    echo "Waiting for $url..."
+    if ! protocol_wait_for_http "$url" 200 "$hc_timeout" "$hc_interval"; then
+      echo "Server failed to become healthy. Check $log_file" >&2
+      protocol_shutdown_server "$SERVER_PID" sigkill
+      return 1
+    fi
+  elif [ "$hc_type" = "connect" ]; then
+    echo "Waiting for WebSocket port $port..."
+    if ! protocol_wait_for_tcp "$bind" "$port" "$hc_timeout" "$hc_interval"; then
+      echo "Server port failed to open. Check $log_file" >&2
+      protocol_shutdown_server "$SERVER_PID" sigkill
+      return 1
+    fi
+  fi
+
+  # Export client env
+  eval "$client_env"
+
+  # Spawn client or exec remaining args
+  if [ ${#client_cmd[@]} -gt 0 ]; then
+    echo "Starting $tool client..."
+    "${client_cmd[@]}" "$@"
+    local client_rc=$?
+  else
+    "$@"
+    local client_rc=$?
+  fi
+
+  # Shutdown server
+  local shutdown_method
+  shutdown_method="$(protocol_json_field "$apath" "protocol.websocket.shutdown.method" 2>/dev/null)"
+  [ -z "$shutdown_method" ] && shutdown_method="sigterm"
+  protocol_shutdown_server "$SERVER_PID" "$shutdown_method" 5000
+  return $client_rc
 }
 
 cmd_list() {

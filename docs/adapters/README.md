@@ -18,7 +18,10 @@ Multi-CLI supports 17 AI tools. Each guide covers installation, account isolatio
 | [`grok-cli`](grok-cli.md) | Grok Build CLI | CLI | Process token | [JSON](../../ai-tools/grok-cli/adapter.json) |
 | [`kimi-cli`](kimi-cli.md) | Kimi Code CLI | CLI | Process token | [JSON](../../ai-tools/kimi-cli/adapter.json) |
 | [`kiro`](kiro.md) | Kiro IDE | IDE | OS user | [JSON](../../ai-tools/kiro/adapter.json) |
+| [`mimocode`](mimocode.md) | MiMo Code | CLI | File overlay | [JSON](../../ai-tools/mimocode/adapter.json) |
 | [`opencode`](opencode.md) | OpenCode | CLI | Whole-root only | [JSON](../../ai-tools/opencode/adapter.json) |
+| [`vibe`](vibe.md) | Mistral Vibe | CLI | File overlay | [JSON](../../ai-tools/vibe/adapter.json) |
+| [`vibe-acp`](vibe-acp.md) | Vibe ACP | CLI (ACP) | File overlay | [JSON](../../ai-tools/vibe-acp/adapter.json) |
 | [`windsurf`](windsurf.md) | Devin Desktop (Windsurf) | IDE | OS user | [JSON](../../ai-tools/windsurf/adapter.json) |
 | [`zed`](zed.md) | Zed | IDE | OS user | [JSON](../../ai-tools/zed/adapter.json) |
 

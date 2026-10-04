@@ -93,7 +93,7 @@ validate_adapter_object_fields() {
 
 validate_adapter_fields() {
   local manifest="$1" schema_version="$2" top_level
-  top_level=$'schemaVersion\nid\ndisplayName\nkind\nbinary\nisolation\ninstall\nversionCommand'
+  top_level=$'schemaVersion\nid\ndisplayName\nkind\nbinary\nprotocol\nisolation\ninstall\nversionCommand'
   if [ "$schema_version" -eq 1 ]; then
     top_level+=$'\nshare\nsession\nstatus'
   else
@@ -112,6 +112,7 @@ validate_adapter_fields() {
   validate_adapter_object_fields "$manifest" '.normalState.root' $'windows\nmacos\nlinux' 'normalState.root'
   validate_adapter_object_fields "$manifest" '.concurrency' $'level\nsingletonScope' 'concurrency'
   validate_adapter_object_fields "$manifest" '.support' $'windows\nmacos\nlinux' 'support'
+  validate_adapter_object_fields "$manifest" '.protocol' $'type\nstdio\nhttp\nacp\nwebsocket' 'protocol'
   local platform
   for platform in windows macos linux; do
     validate_adapter_object_fields "$manifest" ".support.$platform" $'level\nreason' "support.$platform"
@@ -232,6 +233,40 @@ validate_adapter_v2() {
   validate_adapter_path_separation "$manifest" '.normalState.sharedPaths' 'shared path' '.normalState.unsafePaths' 'unsafe path'
   validate_adapter_path_separation "$manifest" '.normalState.sessionPaths' 'session path' '.normalState.unsafePaths' 'unsafe path'
   validate_adapter_support "$manifest"
+  validate_adapter_protocol "$manifest"
+}
+
+# Protocol field validation: if present, type must be known and sub-objects
+# must have their required fields.
+validate_adapter_protocol() {
+  local manifest="$1" protocol_type
+  protocol_type="$(jq -r '.protocol.type // empty' "$manifest")"
+  [ -z "$protocol_type" ] && return 0
+
+  case "$protocol_type" in
+    exec) ;;
+    stdio)
+      validate_adapter_object_fields "$manifest" '.protocol.stdio' $'command\nenv\nmessageFormat\nnewlineDelimited\nhealthCheck\nclientEnv\nclientCommand' 'protocol.stdio'
+      [ "$(jq -r '.protocol.stdio.command | if type == "array" then length else 0 end' "$manifest")" -gt 0 ] || \
+        adapter_validation_error "protocol.stdio.command must not be empty"
+      ;;
+    http)
+      validate_adapter_object_fields "$manifest" '.protocol.http' $'command\nport\nbindAddress\nhealthCheck\nenv\nclientEnv\nclientCommand\nshutdown' 'protocol.http'
+      [ "$(jq -r '.protocol.http.command | if type == "array" then length else 0 end' "$manifest")" -gt 0 ] || \
+        adapter_validation_error "protocol.http.command must not be empty"
+      ;;
+    acp)
+      validate_adapter_object_fields "$manifest" '.protocol.acp' $'command\ntransport\nenv\nhandshake\nclientEnv\nclientCommand\nsocket' 'protocol.acp'
+      [ "$(jq -r '.protocol.acp.command | if type == "array" then length else 0 end' "$manifest")" -gt 0 ] || \
+        adapter_validation_error "protocol.acp.command must not be empty"
+      ;;
+    websocket)
+      validate_adapter_object_fields "$manifest" '.protocol.websocket' $'command\nport\nbindAddress\npath\nhealthCheck\nenv\nclientEnv\nclientCommand\nshutdown' 'protocol.websocket'
+      [ "$(jq -r '.protocol.websocket.command | if type == "array" then length else 0 end' "$manifest")" -gt 0 ] || \
+        adapter_validation_error "protocol.websocket.command must not be empty"
+      ;;
+    *) adapter_validation_error "protocol.type '$protocol_type' is not supported" ;;
+  esac
 }
 
 # Validate one manifest against the directory it lives in. Collects every
